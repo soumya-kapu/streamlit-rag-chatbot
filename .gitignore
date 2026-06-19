@@ -1,0 +1,9 @@
+venv/
+__pycache__/
+.chroma/
+chroma_db/
+vectorstore/
+models/
+documents/
+*.pyc
+.env
