@@ -1,7 +1,7 @@
 import streamlit as st
 from pypdf import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-import ollama
+from groq import Groq
 
 
 # ----------------------------
@@ -17,16 +17,21 @@ st.title("📚 PDF RAG Chatbot")
 
 
 # ----------------------------
-# Chat History
+# Session Storage
 # ----------------------------
+if "chunks" not in st.session_state:
+    st.session_state.chunks = []
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 
 # ----------------------------
-# Simple Embedding Replacement
+# Groq Client
 # ----------------------------
-documents = []
+client = Groq(
+    api_key=st.secrets["GROQ_API_KEY"]
+)
 
 
 # ----------------------------
@@ -40,12 +45,12 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file:
 
-    # Read PDF
     pdf = PdfReader(uploaded_file)
 
     text = ""
 
     for page in pdf.pages:
+
         page_text = page.extract_text()
 
         if page_text:
@@ -53,47 +58,68 @@ if uploaded_file:
 
 
     if not text.strip():
-        st.error("No text could be extracted from this PDF.")
+
+        st.error(
+            "Could not extract text from PDF"
+        )
+
         st.stop()
 
 
-    # Split text
+    # Split document
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
         chunk_overlap=200
     )
 
+
     chunks = splitter.split_text(text)
 
 
-    # Store chunks in memory
-    documents = chunks
+    st.session_state.chunks = chunks
 
 
-    st.success(f"Stored {len(chunks)} chunks")
+    st.success(
+        f"Created {len(chunks)} chunks"
+    )
 
 
-    # Preview chunks
-    with st.expander("View First 3 Chunks"):
+    with st.expander(
+        "View sample chunks"
+    ):
 
         for i, chunk in enumerate(chunks[:3]):
-            st.markdown(f"### Chunk {i+1}")
+
+            st.write(
+                f"Chunk {i+1}"
+            )
+
             st.write(chunk)
 
 
-    # Show previous messages
 
-    for message in st.session_state.messages:
+# ----------------------------
+# Chat History
+# ----------------------------
+for message in st.session_state.messages:
 
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+    with st.chat_message(
+        message["role"]
+    ):
+
+        st.markdown(
+            message["content"]
+        )
 
 
 
-    # Chat input
+# ----------------------------
+# Ask Question
+# ----------------------------
+if st.session_state.chunks:
 
     question = st.chat_input(
-        "Ask a question about the PDF..."
+        "Ask something about your PDF..."
     )
 
 
@@ -109,26 +135,57 @@ if uploaded_file:
 
 
         with st.chat_message("user"):
+
             st.markdown(question)
 
 
 
         # Simple retrieval
-        retrieved_chunks = documents[:3]
+        relevant_chunks = []
+
+        question_words = set(
+            question.lower().split()
+        )
+
+
+        for chunk in st.session_state.chunks:
+
+            chunk_words = set(
+                chunk.lower().split()
+            )
+
+            score = len(
+                question_words.intersection(
+                    chunk_words
+                )
+            )
+
+
+            if score > 0:
+                relevant_chunks.append(chunk)
+
+
+
+        if not relevant_chunks:
+
+            relevant_chunks = (
+                st.session_state.chunks[:3]
+            )
 
 
         context = "\n\n".join(
-            retrieved_chunks
+            relevant_chunks[:3]
         )
 
 
         prompt = f"""
-You are a helpful AI assistant.
+You are a helpful document assistant.
 
-Answer only using the context below.
+Answer ONLY from the provided context.
 
-If the answer is not available, say:
-"I could not find that information in the document."
+If the answer is not present in the context,
+say:
+"I could not find this information in the document."
 
 Context:
 
@@ -141,20 +198,38 @@ Question:
 """
 
 
-        with st.spinner("Generating answer..."):
+        # LLM Response
+        with st.spinner(
+            "Generating answer..."
+        ):
 
-            response = ollama.chat(
-                model="qwen2.5:1.5b",
+            response = client.chat.completions.create(
+
+                model="llama-3.1-8b-instant",
+
                 messages=[
+
+                    {
+                        "role": "system",
+                        "content":
+                        "You answer questions from documents."
+                    },
+
                     {
                         "role": "user",
                         "content": prompt
                     }
+
                 ]
             )
 
 
-            answer = response["message"]["content"]
+            answer = (
+                response
+                .choices[0]
+                .message
+                .content
+            )
 
 
 
@@ -166,14 +241,24 @@ Question:
         )
 
 
-        with st.chat_message("assistant"):
+        with st.chat_message(
+            "assistant"
+        ):
+
             st.markdown(answer)
 
 
 
-        with st.expander("📄 Retrieved Source Chunks"):
+        with st.expander(
+            "📄 Sources used"
+        ):
 
-            for i, chunk in enumerate(retrieved_chunks):
+            for i, chunk in enumerate(
+                relevant_chunks[:3]
+            ):
 
-                st.markdown(f"### Source {i+1}")
+                st.write(
+                    f"Source {i+1}"
+                )
+
                 st.write(chunk)

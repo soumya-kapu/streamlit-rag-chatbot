@@ -7,3 +7,4 @@ models/
 documents/
 *.pyc
 .env
+.streamlit/secrets.toml
