@@ -1,6 +1,7 @@
 streamlit
 pypdf
 langchain-text-splitters
+chromadb==0.5.23
 sentence-transformers
-chromadb
 ollama
+protobuf==4.25.3
