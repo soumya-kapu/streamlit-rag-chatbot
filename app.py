@@ -1,264 +1,183 @@
 import streamlit as st
+import os
+
 from pypdf import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from groq import Groq
+
+from sentence_transformers import SentenceTransformer
+import chromadb
+
+from llama_cpp import Llama
 
 
-# ----------------------------
-# Page Config
-# ----------------------------
+# -----------------------------
+# Page config
+# -----------------------------
 st.set_page_config(
-    page_title="PDF RAG Chatbot",
-    page_icon="📚",
-    layout="wide"
+    page_title="Local RAG Chatbot",
+    page_icon="📚"
 )
 
-st.title("📚 PDF RAG Chatbot")
+st.title("📚 Local Document Q&A using RAG")
 
 
-# ----------------------------
-# Session Storage
-# ----------------------------
-if "chunks" not in st.session_state:
-    st.session_state.chunks = []
+# -----------------------------
+# Paths
+# -----------------------------
+MODEL_PATH = "models/qwen2.5-1.5b-instruct-q4_0.gguf"
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+DB_PATH = "chroma_db"
 
 
-# ----------------------------
-# Groq Client
-# ----------------------------
-client = Groq(
-    api_key=st.secrets["GROQ_API_KEY"]
+# -----------------------------
+# Load LLM
+# -----------------------------
+@st.cache_resource
+def load_llm():
+
+    return Llama(
+        model_path=MODEL_PATH,
+        n_ctx=4096,
+        n_threads=4,
+        verbose=False
+    )
+
+
+llm = load_llm()
+
+
+# -----------------------------
+# Load embeddings
+# -----------------------------
+@st.cache_resource
+def load_embedding():
+
+    return SentenceTransformer(
+        "all-MiniLM-L6-v2"
+    )
+
+
+embedder = load_embedding()
+
+
+# -----------------------------
+# Chroma DB
+# -----------------------------
+client = chromadb.PersistentClient(
+    path=DB_PATH
+)
+
+collection = client.get_or_create_collection(
+    name="documents"
 )
 
 
-# ----------------------------
+# -----------------------------
+# PDF processing
+# -----------------------------
+def process_pdf(file):
+
+    reader = PdfReader(file)
+
+    text = ""
+
+    for page in reader.pages:
+        text += page.extract_text() or ""
+
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=500,
+        chunk_overlap=100
+    )
+
+    chunks = splitter.split_text(text)
+
+
+    embeddings = embedder.encode(chunks)
+
+
+    for i, chunk in enumerate(chunks):
+
+        collection.add(
+            ids=[str(i)],
+            documents=[chunk],
+            embeddings=[embeddings[i].tolist()]
+        )
+
+
+    return len(chunks)
+
+
+
+# -----------------------------
 # Upload PDF
-# ----------------------------
+# -----------------------------
 uploaded_file = st.file_uploader(
     "Upload PDF",
-    type=["pdf"]
+    type="pdf"
 )
 
 
 if uploaded_file:
 
-    pdf = PdfReader(uploaded_file)
+    if st.button("Process Document"):
 
-    text = ""
+        count = process_pdf(uploaded_file)
 
-    for page in pdf.pages:
-
-        page_text = page.extract_text()
-
-        if page_text:
-            text += page_text
-
-
-    if not text.strip():
-
-        st.error(
-            "Could not extract text from PDF"
+        st.success(
+            f"Processed {count} chunks"
         )
 
-        st.stop()
 
 
-    # Split document
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200
+# -----------------------------
+# Question Answer
+# -----------------------------
+question = st.text_input(
+    "Ask a question"
+)
+
+
+if question:
+
+    q_embedding = embedder.encode(
+        [question]
+    )[0]
+
+
+    results = collection.query(
+        query_embeddings=[
+            q_embedding.tolist()
+        ],
+        n_results=3
     )
 
 
-    chunks = splitter.split_text(text)
-
-
-    st.session_state.chunks = chunks
-
-
-    st.success(
-        f"Created {len(chunks)} chunks"
+    context = "\n".join(
+        results["documents"][0]
     )
 
 
-    with st.expander(
-        "View sample chunks"
-    ):
-
-        for i, chunk in enumerate(chunks[:3]):
-
-            st.write(
-                f"Chunk {i+1}"
-            )
-
-            st.write(chunk)
-
-
-
-# ----------------------------
-# Chat History
-# ----------------------------
-for message in st.session_state.messages:
-
-    with st.chat_message(
-        message["role"]
-    ):
-
-        st.markdown(
-            message["content"]
-        )
-
-
-
-# ----------------------------
-# Ask Question
-# ----------------------------
-if st.session_state.chunks:
-
-    question = st.chat_input(
-        "Ask something about your PDF..."
-    )
-
-
-    if question:
-
-
-        st.session_state.messages.append(
-            {
-                "role": "user",
-                "content": question
-            }
-        )
-
-
-        with st.chat_message("user"):
-
-            st.markdown(question)
-
-
-
-        # Simple retrieval
-        relevant_chunks = []
-
-        question_words = set(
-            question.lower().split()
-        )
-
-
-        for chunk in st.session_state.chunks:
-
-            chunk_words = set(
-                chunk.lower().split()
-            )
-
-            score = len(
-                question_words.intersection(
-                    chunk_words
-                )
-            )
-
-
-            if score > 0:
-                relevant_chunks.append(chunk)
-
-
-
-        if not relevant_chunks:
-
-            relevant_chunks = (
-                st.session_state.chunks[:3]
-            )
-
-
-        context = "\n\n".join(
-            relevant_chunks[:3]
-        )
-
-
-        prompt = f"""
-You are a helpful document assistant.
-
-Answer ONLY from the provided context.
-
-If the answer is not present in the context,
-say:
-"I could not find this information in the document."
+    prompt = f"""
+Use the context below to answer.
 
 Context:
-
 {context}
 
-
 Question:
-
 {question}
+
+Answer:
 """
 
 
-        # LLM Response
-        with st.spinner(
-            "Generating answer..."
-        ):
-
-            response = client.chat.completions.create(
-
-                model="llama-3.1-8b-instant",
-
-                messages=[
-
-                    {
-                        "role": "system",
-                        "content":
-                        "You answer questions from documents."
-                    },
-
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-
-                ]
-            )
+    response = llm(
+        prompt,
+        max_tokens=300
+    )
 
 
-            answer = (
-                response
-                .choices[0]
-                .message
-                .content
-            )
+    answer = response["choices"][0]["text"]
 
 
-
-        st.session_state.messages.append(
-            {
-                "role": "assistant",
-                "content": answer
-            }
-        )
-
-
-        with st.chat_message(
-            "assistant"
-        ):
-
-            st.markdown(answer)
-
-
-
-        with st.expander(
-            "📄 Sources used"
-        ):
-
-            for i, chunk in enumerate(
-                relevant_chunks[:3]
-            ):
-
-                st.write(
-                    f"Source {i+1}"
-                )
-
-                st.write(chunk)
+    st.write(answer)
