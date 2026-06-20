@@ -1,6 +1,7 @@
 import streamlit as st
 import os
-
+from huggingface_hub import hf_hub_download
+import os
 from pypdf import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -24,8 +25,19 @@ st.title("📚 Local Document Q&A using RAG")
 # -----------------------------
 # Paths
 # -----------------------------
-MODEL_PATH = "models/qwen2.5-1.5b-instruct-q4_0.gguf"
+MODEL_DIR = "models"
+MODEL_FILE = "qwen2.5-1.5b-instruct-q4_0.gguf"
 
+os.makedirs(MODEL_DIR, exist_ok=True)
+
+MODEL_PATH = os.path.join(MODEL_DIR, MODEL_FILE)
+
+if not os.path.exists(MODEL_PATH):
+    hf_hub_download(
+        repo_id="Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+        filename=MODEL_FILE,
+        local_dir=MODEL_DIR
+    )
 DB_PATH = "chroma_db"
 
 

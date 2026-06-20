@@ -5,3 +5,4 @@ chromadb
 sentence-transformers
 pymupdf4llm
 llama-cpp-python
+huggingface-hub
