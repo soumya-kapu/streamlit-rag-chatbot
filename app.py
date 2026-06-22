@@ -1,4 +1,5 @@
 import streamlit as st
+import re
 from pypdf import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -16,26 +17,42 @@ def process_pdf(uploaded_file):
 
     for page in reader.pages:
         text += page.extract_text() or ""
+        text += "\n"
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=800,
+        chunk_size=500,
         chunk_overlap=100
     )
 
     chunks = splitter.split_text(text)
     return chunks
 
+def clean_text(text):
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
 def retrieve_relevant_chunks(question, chunks, top_k=3):
-    question_words = set(question.lower().split())
-    scored = []
+    question_words = set(re.findall(r'\w+', question.lower()))
+    scored_chunks = []
 
     for chunk in chunks:
-        chunk_words = set(chunk.lower().split())
+        chunk_words = set(re.findall(r'\w+', chunk.lower()))
         score = len(question_words.intersection(chunk_words))
-        scored.append((score, chunk))
 
-    scored.sort(reverse=True, key=lambda x: x[0])
-    return [chunk for score, chunk in scored[:top_k] if score > 0]
+        # extra boost if full question words appear multiple times
+        for word in question_words:
+            score += chunk.lower().count(word)
+
+        scored_chunks.append((score, chunk))
+
+    scored_chunks.sort(reverse=True, key=lambda x: x[0])
+
+    results = []
+    for score, chunk in scored_chunks[:top_k]:
+        if score > 0:
+            results.append(clean_text(chunk))
+
+    return results
 
 uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
 
@@ -54,10 +71,12 @@ if st.session_state.doc_chunks:
 
         if relevant_chunks:
             st.subheader("Answer")
-            st.write("Here are the most relevant parts of the document:")
+            st.write(relevant_chunks[0])
 
-            for i, chunk in enumerate(relevant_chunks, 1):
-                st.markdown(f"**Chunk {i}:**")
-                st.write(chunk)
+            if len(relevant_chunks) > 1:
+                with st.expander("See more relevant text"):
+                    for i, chunk in enumerate(relevant_chunks[1:], 2):
+                        st.markdown(f"**Relevant chunk {i}:**")
+                        st.write(chunk)
         else:
-            st.warning("No relevant answer found in the document.")
+            st.warning("Sorry, I could not find relevant information in the document.")
