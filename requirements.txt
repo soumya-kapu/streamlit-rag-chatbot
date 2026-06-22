@@ -2,7 +2,4 @@ streamlit==1.58.0
 pypdf
 langchain-text-splitters
 chromadb
-sentence-transformers==3.0.1
-pymupdf4llm
-huggingface-hub
-llama-cpp-python==0.3.30
+sentence-transformers
