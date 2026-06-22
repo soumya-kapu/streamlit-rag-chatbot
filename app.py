@@ -1,195 +1,63 @@
 import streamlit as st
-import os
-from huggingface_hub import hf_hub_download
-import os
 from pypdf import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from sentence_transformers import SentenceTransformer
-import chromadb
+st.set_page_config(page_title="Document Q&A App", page_icon="📄")
 
-from llama_cpp import Llama
+st.title("📄 Mozilla / RAG Document Q&A Demo")
+st.write("Upload a PDF and ask questions about its content.")
 
+if "doc_chunks" not in st.session_state:
+    st.session_state.doc_chunks = []
 
-# -----------------------------
-# Page config
-# -----------------------------
-st.set_page_config(
-    page_title="Local RAG Chatbot",
-    page_icon="📚"
-)
-
-st.title("📚 Local Document Q&A using RAG")
-
-
-# -----------------------------
-# Paths
-# -----------------------------
-MODEL_DIR = "models"
-MODEL_FILE = "qwen2.5-1.5b-instruct-q4_0.gguf"
-
-os.makedirs(MODEL_DIR, exist_ok=True)
-
-MODEL_PATH = os.path.join(MODEL_DIR, MODEL_FILE)
-
-if not os.path.exists(MODEL_PATH):
-    hf_hub_download(
-        repo_id="Qwen/Qwen2.5-1.5B-Instruct-GGUF",
-        filename=MODEL_FILE,
-        local_dir=MODEL_DIR
-    )
-DB_PATH = "chroma_db"
-
-
-# -----------------------------
-# Load LLM
-# -----------------------------
-@st.cache_resource
-def load_llm():
-
-    return Llama(
-        model_path=MODEL_PATH,
-        n_ctx=4096,
-        n_threads=4,
-        verbose=False
-    )
-
-
-llm = load_llm()
-
-
-# -----------------------------
-# Load embeddings
-# -----------------------------
-@st.cache_resource
-def load_embedding():
-
-    return SentenceTransformer(
-        "all-MiniLM-L6-v2"
-    )
-
-
-embedder = load_embedding()
-
-
-# -----------------------------
-# Chroma DB
-# -----------------------------
-client = chromadb.PersistentClient(
-    path=DB_PATH
-)
-
-collection = client.get_or_create_collection(
-    name="documents"
-)
-
-
-# -----------------------------
-# PDF processing
-# -----------------------------
-def process_pdf(file):
-
-    reader = PdfReader(file)
-
+def process_pdf(uploaded_file):
+    reader = PdfReader(uploaded_file)
     text = ""
 
     for page in reader.pages:
         text += page.extract_text() or ""
 
-
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,
+        chunk_size=800,
         chunk_overlap=100
     )
 
     chunks = splitter.split_text(text)
+    return chunks
 
+def retrieve_relevant_chunks(question, chunks, top_k=3):
+    question_words = set(question.lower().split())
+    scored = []
 
-    embeddings = embedder.encode(chunks)
+    for chunk in chunks:
+        chunk_words = set(chunk.lower().split())
+        score = len(question_words.intersection(chunk_words))
+        scored.append((score, chunk))
 
+    scored.sort(reverse=True, key=lambda x: x[0])
+    return [chunk for score, chunk in scored[:top_k] if score > 0]
 
-    for i, chunk in enumerate(chunks):
-
-        collection.add(
-            ids=[str(i)],
-            documents=[chunk],
-            embeddings=[embeddings[i].tolist()]
-        )
-
-
-    return len(chunks)
-
-
-
-# -----------------------------
-# Upload PDF
-# -----------------------------
-uploaded_file = st.file_uploader(
-    "Upload PDF",
-    type="pdf"
-)
-
+uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
 
 if uploaded_file:
+    if st.button("Process PDF"):
+        with st.spinner("Processing PDF..."):
+            chunks = process_pdf(uploaded_file)
+            st.session_state.doc_chunks = chunks
+        st.success(f"PDF processed successfully! {len(chunks)} chunks created.")
 
-    if st.button("Process Document"):
+if st.session_state.doc_chunks:
+    question = st.text_input("Ask a question about the uploaded document:")
 
-        count = process_pdf(uploaded_file)
+    if question:
+        relevant_chunks = retrieve_relevant_chunks(question, st.session_state.doc_chunks)
 
-        st.success(
-            f"Processed {count} chunks"
-        )
+        if relevant_chunks:
+            st.subheader("Answer")
+            st.write("Here are the most relevant parts of the document:")
 
-
-
-# -----------------------------
-# Question Answer
-# -----------------------------
-question = st.text_input(
-    "Ask a question"
-)
-
-
-if question:
-
-    q_embedding = embedder.encode(
-        [question]
-    )[0]
-
-
-    results = collection.query(
-        query_embeddings=[
-            q_embedding.tolist()
-        ],
-        n_results=3
-    )
-
-
-    context = "\n".join(
-        results["documents"][0]
-    )
-
-
-    prompt = f"""
-Use the context below to answer.
-
-Context:
-{context}
-
-Question:
-{question}
-
-Answer:
-"""
-
-
-    response = llm(
-        prompt,
-        max_tokens=300
-    )
-
-
-    answer = response["choices"][0]["text"]
-
-
-    st.write(answer)
+            for i, chunk in enumerate(relevant_chunks, 1):
+                st.markdown(f"**Chunk {i}:**")
+                st.write(chunk)
+        else:
+            st.warning("No relevant answer found in the document.")
