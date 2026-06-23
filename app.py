@@ -5,8 +5,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 st.set_page_config(page_title="Document Q&A App", page_icon="📄")
 
-st.title("📄 Mozilla / RAG Document Q&A Demo")
-st.write("Upload a PDF and ask questions about its content.")
+st.title("🚀📄 Mozilla / RAG Document Q&A Demo - UPDATED VERSION")
+st.write("✅ NEW VERSION LIVE ✅ Upload a PDF and ask questions about its content.")
 
 if "doc_text" not in st.session_state:
     st.session_state.doc_text = ""
@@ -135,7 +135,6 @@ if st.session_state.doc_text:
     question = st.text_input("Ask a question about the uploaded document:")
 
     if question:
-        # 1) try section extraction first
         section_answer = extract_section(question, st.session_state.doc_text)
 
         if section_answer:
@@ -143,7 +142,6 @@ if st.session_state.doc_text:
             st.write(section_answer)
 
         else:
-            # 2) fallback to generic retrieval
             relevant_chunks = retrieve_relevant_chunks(question, st.session_state.doc_chunks)
 
             if relevant_chunks:
